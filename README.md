@@ -89,12 +89,12 @@ On the phone (`mobile/`):
 - **Contacts** tab — add/remove phone numbers (with optional labels).
 - **Alarms** tab — received events with maps link, sent-recipient count, and "Dismiss as false alarm" button.
 
-## Status
+## Status — paused on the watch side (2026-05-08)
 
-- ✅ `mobile/` Android phone app — builds, installs, runs.
-- ✅ `tizen/` source files — written, but not yet compiled (needs Tizen Studio + Samsung Wearable Extension).
-- ⏳ `mobile/` SAP consumer — currently uses Wear OS Data Layer; needs rewrite to Samsung Accessory SDK before the two ends can talk.
-- ⏳ End-to-end test on real Watch 3 hardware.
+- ✅ `mobile/` Android phone app — builds, installs, runs on a Galaxy S23.
+- ✅ `tizen/` source files — written, header/lib paths confirmed against the installed Tizen rootstraps (build against `wearable-6.5-device.core` + SAP from `wearable-5.5-device.core`, manifest at `api-version="5.5"`).
+- 🚫 **Galaxy Watch 3 install is blocked at the device level.** Firmware `R850XXU1DWK2` (Tizen 5.5.0.2) ships a trimmed Developer-options menu without the **ADB debugging** / **Debug over Wi-Fi** toggles, so `sdb` cannot reach the watch. Samsung provides no end-user flashing tool for the Watch 3 and the OTA path is forward-only — there is no practical firmware downgrade. Unblock paths: switch hardware to a Wear OS watch (Galaxy Watch 4+, restores the archived Kotlin module under `_archive/wear-os/`), find a signed-tpk sideload route through Galaxy Wearable (unconfirmed on this firmware), or wait for a future Samsung firmware that re-exposes the toggles.
+- ⏸ `mobile/messaging/` SAP rewrite — deferred until the watch path is unblocked. The current Wear-OS-Data-Layer code in `mobile/` compiles but cannot talk to a Tizen watch, and there's no point porting it before we can test against a real device.
 
 ## What's not included yet
 
