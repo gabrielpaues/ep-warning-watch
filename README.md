@@ -120,5 +120,4 @@ The unblock chosen: switch to a Galaxy Watch 6 (Wear OS), promote the previously
 ## What's not included yet
 
 - No end-to-end test on real hardware — the Wear OS watch is not in hand at the time of the pivot.
-- No tests — the `ShakeDetector` is the obvious candidate (it has no Android deps).
-- No end-to-end synthetic-shake replay tooling for tuning the threshold curve.
+- No end-to-end synthetic-shake replay tooling for tuning the threshold curve. (`ShakeDetector` itself has JVM unit tests in `wear/src/test/...`; what's missing is a tool that drives a real sensor stream from a recording.)
