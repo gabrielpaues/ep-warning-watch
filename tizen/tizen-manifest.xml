@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest xmlns="http://tizen.org/ns/packages" api-version="5.5" package="com.epwarning.watch" version="0.1.0">
+    <profile name="wearable"/>
+    <service-application appid="com.epwarning.watch.service"
+                        exec="ep_warning_service"
+                        type="capp"
+                        multiple="false"
+                        taskmanage="false"
+                        nodisplay="true"
+                        on-boot="false"
+                        auto-restart="true">
+        <label>EP Warning Service</label>
+        <icon>ep_warning.png</icon>
+        <background-category value="sensor"/>
+        <background-category value="iot-communication"/>
+    </service-application>
+    <ui-application appid="com.epwarning.watch.ui"
+                    exec="ep_warning_ui"
+                    multiple="false"
+                    nodisplay="false"
+                    taskmanage="true"
+                    type="capp">
+        <label>EP Warning</label>
+        <icon>ep_warning.png</icon>
+        <metadata key="http://tizen.org/metadata/circle.app/appearance" value="circle"/>
+    </ui-application>
+    <privileges>
+        <privilege>http://tizen.org/privilege/healthinfo</privilege>
+        <privilege>http://tizen.org/privilege/appmanager.launch</privilege>
+        <privilege>http://tizen.org/privilege/bluetooth</privilege>
+        <privilege>http://tizen.org/privilege/network.get</privilege>
+        <privilege>http://developer.samsung.com/tizen/privilege/accessoryprotocol</privilege>
+    </privileges>
+    <feature name="http://tizen.org/feature/sensor.accelerometer">true</feature>
+    <feature name="http://tizen.org/feature/sensor.gyroscope">true</feature>
+    <feature name="http://developer.samsung.com/tizen/feature/profile">wearable</feature>
+</manifest>

@@ -1,0 +1,24 @@
+.DS_Store
+
+# Gradle / Android build outputs (any depth)
+.gradle/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+
+# IDE
+*.iml
+.idea/
+.vscode/
+
+# Local environment
+local.properties
+
+# Tizen Studio project outputs
+**/Debug/
+**/Release/
+*.tpk
+.tproject
+.exportMap

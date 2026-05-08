@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EP Warning</string>
+    <string name="tab_status">Status</string>
+    <string name="tab_contacts">Contacts</string>
+    <string name="tab_alarms">Alarms</string>
+    <string name="watch_connected">Watch connected</string>
+    <string name="watch_disconnected">No watch detected — pair via Galaxy Wearable, then install the watch app.</string>
+    <string name="add_contact">Add phone number</string>
+    <string name="hint_phone">+46…</string>
+    <string name="hint_label">Name (optional)</string>
+    <string name="save">Save</string>
+    <string name="remove">Remove</string>
+    <string name="no_contacts">No contacts yet — add at least one number to receive alerts.</string>
+    <string name="no_alarms">No alarms received.</string>
+    <string name="clear_alarm">Dismiss as false alarm</string>
+    <string name="alarm_delivered">SMS sent</string>
+    <string name="alarm_failed">SMS failed</string>
+    <string name="alarm_dismissed">Dismissed</string>
+    <string name="permissions_needed">Grant SMS and Location permissions for alerts to work.</string>
+    <string name="grant_permissions">Grant permissions</string>
+    <string name="notif_alarm_channel">Alarms</string>
+    <string name="notif_alarm_title">Seizure alarm received</string>
+    <string name="notif_alarm_text">SMS sent to %1$d contact(s)</string>
+</resources>
