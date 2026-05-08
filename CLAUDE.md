@@ -16,6 +16,10 @@ Two Android apps that talk to each other over Bluetooth via the **Wearable Data 
 
 **Battery strategy** (in `DetectorService`): two-stage sensor pipeline. Stage 1 (idle) registers the accelerometer at `SENSOR_DELAY_NORMAL` with a 5 s batch latency so the SoC can sleep between batches. When linear acceleration crosses `WAKE_GATE_M_S2` (2.5 m/s²), stage 2 swaps to gyroscope at `SENSOR_DELAY_GAME` feeding the detector. Drops back after `IDLE_TIMEOUT_NS` (15 s) of below-gate motion. The service runs as a foreground service with `foregroundServiceType="health"`; partial wakelocks are acquired only briefly when posting an alarm.
 
+**Pre-alarm countdown** (configurable 0–15 s, default 5 s): when the detector triggers, `DetectorService.startCountdown` runs a coroutine that vibrates + beeps each second (escalating on the final second) and launches `CountdownActivity` for the visual + Cancel button. **The service is the source of truth for the timer** — the activity is just UX. If the activity is killed, the alarm still fires. Cancel comes back to the service via a `RECEIVER_NOT_EXPORTED` broadcast (`DetectorService.ACTION_CANCEL_COUNTDOWN`); cancelled alarms are recorded with `cancelledByUser = true` so they show up in History for sensitivity tuning. `countdownSeconds == 0` skips the countdown entirely and fires immediately.
+
+**Boot restart**: `BootReceiver` listens for `ACTION_BOOT_COMPLETED`, reads `monitoringEnabled` from DataStore via `goAsync()` + a coroutine, and starts `DetectorService` if it was on at the time of reboot.
+
 ## Critical project history (not obvious from code)
 
 - The project pivoted **from Tizen back to Wear OS** on 2026-05-08 once it became clear the only realistic test hardware is a Galaxy Watch 6 (Wear OS), not the Galaxy Watch 3 (Tizen 5.5) that was originally on hand. The Tizen Native (C) implementation that lived under `tizen/` is preserved at `_archive/tizen/` for reference; don't extend it.

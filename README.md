@@ -70,6 +70,16 @@ The watch's foreground service runs two stages:
 
 The service uses `foregroundServiceType="health"` so it isn't killed when the screen is off. Closing the UI does not stop the service.
 
+## Pre-alarm countdown
+
+Between detector trigger and SMS dispatch, the watch runs a configurable countdown (default 5 s, range 0–15 s; 0 disables it). During the countdown the watch vibrates and beeps each second — escalating to a longer/stronger pulse on the final second — and shows a full-screen "ALARM IN N" screen with a Cancel button. The wearer can cancel a false positive within the window; cancelled triggers are still recorded in History (marked ✗) so the sensitivity can be tuned over time.
+
+The service owns the countdown timer, not the activity, so the alarm still fires if the visual is killed by the OS. Cancel works via a `RECEIVER_NOT_EXPORTED` broadcast back to the service.
+
+## Boot restart
+
+A `BootReceiver` listens for `ACTION_BOOT_COMPLETED` and re-starts `DetectorService` if `monitoringEnabled` was on when the watch rebooted — so the wearer doesn't have to re-arm after a reboot.
+
 ## Phone-side flow
 
 When the phone's `WearableListenerService` receives an alarm message on `/ep-warning/alarm`:
@@ -92,8 +102,9 @@ When the phone's `WearableListenerService` receives an alarm message on `/ep-war
 On the watch (`com.epwarning.wear`):
 - **Sensitivity** slider (0–100 %).
 - **Sustain** slider (4–20 s).
+- **Countdown** slider (0–15 s; 0 = instant fire).
 - **Start / Stop** monitoring toggle.
-- **History** of recent alarms with delivery status.
+- **History** of recent alarms with delivery status (sent ✓, undelivered !, cancelled ✗).
 
 On the phone (`com.epwarning.mobile`):
 - **Status** tab — watch reachability + permission grant button.
@@ -109,7 +120,5 @@ The unblock chosen: switch to a Galaxy Watch 6 (Wear OS), promote the previously
 ## What's not included yet
 
 - No end-to-end test on real hardware — the Wear OS watch is not in hand at the time of the pivot.
-- No boot-restart of the watch service (user must tap Start after a watch reboot).
-- No haptic countdown on the watch when an alarm is about to fire — useful for letting the wearer cancel false positives.
 - No tests — the `ShakeDetector` is the obvious candidate (it has no Android deps).
 - No end-to-end synthetic-shake replay tooling for tuning the threshold curve.

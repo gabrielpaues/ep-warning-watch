@@ -126,6 +126,19 @@ private fun SettingsScreen() {
             decreaseIcon = { Text("-") },
         )
         Text("${settings.sustainSeconds.toInt()}s")
+        Text(stringResource(R.string.countdown))
+        InlineSlider(
+            value = settings.countdownSeconds,
+            onValueChange = { vm.setCountdown(it) },
+            valueRange = 0f..15f,
+            steps = 14,
+            increaseIcon = { Text("+") },
+            decreaseIcon = { Text("-") },
+        )
+        Text(
+            if (settings.countdownSeconds <= 0f) stringResource(R.string.countdown_off)
+            else "${settings.countdownSeconds.toInt()}s"
+        )
     }
 }
 
@@ -160,7 +173,11 @@ private val timeFormat = SimpleDateFormat("MMM d HH:mm", Locale.getDefault())
 @Composable
 private fun AlarmRow(record: AlarmRecord) {
     val time = timeFormat.format(Date(record.triggeredAtEpochMs))
-    val status = if (record.deliveredToPhone) "✓" else "!"
+    val status = when {
+        record.cancelledByUser -> "✗"
+        record.deliveredToPhone -> "✓"
+        else -> "!"
+    }
     Chip(
         label = { Text("$status $time") },
         secondaryLabel = { Text("${"%.1f".format(record.peakIntensity)} rad/s, ${record.sustainedSeconds.toInt()}s") },

@@ -15,6 +15,10 @@
     <string name="phone_disconnected">Phone unreachable</string>
     <string name="sensitivity">Sensitivity</string>
     <string name="sustain">Sustain (s)</string>
+    <string name="countdown">Countdown (s)</string>
+    <string name="countdown_off">Off (instant)</string>
+    <string name="countdown_alarm_in">ALARM IN</string>
+    <string name="countdown_cancel">Cancel</string>
     <string name="no_alarms">No alarms recorded</string>
     <string name="clear_history">Clear history</string>
 </resources>

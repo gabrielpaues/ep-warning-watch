@@ -23,7 +23,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val settings: StateFlow<Settings> = settingsRepo.settings.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5_000),
-        Settings(0.5f, 8f, 60f, false),
+        Settings(0.5f, 8f, 60f, 5f, false),
     )
     val alarms: StateFlow<List<AlarmRecord>> = alarmRepo.alarms.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList(),
@@ -37,6 +37,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun setSustain(value: Float) {
         viewModelScope.launch { settingsRepo.setSustainSeconds(value) }
+    }
+    fun setCountdown(value: Float) {
+        viewModelScope.launch { settingsRepo.setCountdownSeconds(value) }
     }
     fun startMonitoring() {
         viewModelScope.launch { settingsRepo.setMonitoringEnabled(true) }

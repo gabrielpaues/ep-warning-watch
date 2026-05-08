@@ -48,4 +48,5 @@ data class AlarmRecord(
     val peakIntensity: Float,
     val sustainedSeconds: Float,
     val deliveredToPhone: Boolean,
+    val cancelledByUser: Boolean = false,
 )

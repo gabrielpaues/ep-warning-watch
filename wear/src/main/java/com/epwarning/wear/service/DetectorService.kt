@@ -4,16 +4,23 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
@@ -23,11 +30,15 @@ import com.epwarning.wear.MainActivity
 import com.epwarning.wear.R
 import com.epwarning.wear.data.AlarmHistoryRepository
 import com.epwarning.wear.data.AlarmRecord
+import com.epwarning.wear.data.Settings
 import com.epwarning.wear.data.SettingsRepository
 import com.epwarning.wear.detection.Detection
 import com.epwarning.wear.detection.ShakeDetector
 import com.epwarning.wear.messaging.PhoneMessenger
+import com.epwarning.wear.ui.CountdownActivity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -42,6 +53,9 @@ import kotlin.math.sqrt
  *  - Stage 2 (active): gyroscope at SENSOR_DELAY_GAME feeds ShakeDetector. Drops back to
  *    stage 1 after IDLE_TIMEOUT_NS of below-gate motion.
  *  - No held wakelock; partial wakelocks are acquired only briefly when posting an alarm.
+ *
+ * The pre-alarm countdown timer lives here, not in the activity, so the alarm still fires
+ * if the visual is killed. The activity is a UX surface that broadcasts a cancel back.
  */
 class DetectorService : LifecycleService() {
 
@@ -56,6 +70,35 @@ class DetectorService : LifecycleService() {
     private var stage: Stage = Stage.Idle
     private var lastActiveMotionNs: Long = 0L
     private var settingsJob: Job? = null
+    @Volatile private var currentSettings: Settings = Settings(0.5f, 8f, 60f, 5f, false)
+
+    private var countdownJob: Job? = null
+    @Volatile private var pendingPayload: AlarmPayload? = null
+
+    private val cancelReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_CANCEL_COUNTDOWN) return
+            val payload = pendingPayload ?: return
+            val job = countdownJob
+            if (job == null || !job.isActive) return
+            job.cancel()
+            countdownJob = null
+            pendingPayload = null
+            lifecycleScope.launch {
+                alarmRepo.add(
+                    AlarmRecord(
+                        id = payload.id,
+                        triggeredAtEpochMs = payload.triggeredAtEpochMs,
+                        peakIntensity = payload.peakIntensity,
+                        sustainedSeconds = payload.sustainedSeconds,
+                        deliveredToPhone = false,
+                        cancelledByUser = true,
+                    )
+                )
+            }
+            Log.d(TAG, "countdown cancelled by user")
+        }
+    }
 
     private val accelListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
@@ -63,7 +106,6 @@ class DetectorService : LifecycleService() {
             val ay = event.values[1]
             val az = event.values[2]
             val linearMag = sqrt(ax * ax + ay * ay + az * az) - SensorManager.GRAVITY_EARTH
-            // Cheap motion gate: if linear acceleration exceeds WAKE_GATE, escalate.
             if (kotlin.math.abs(linearMag) > WAKE_GATE_M_S2 && stage == Stage.Idle) {
                 escalateToActive()
             }
@@ -105,9 +147,11 @@ class DetectorService : LifecycleService() {
 
         settingsJob = lifecycleScope.launch {
             settingsRepo.settings.distinctUntilChanged().collect { settings ->
+                currentSettings = settings
                 detector.updateConfig(settings.toDetectorConfig())
             }
         }
+        registerCancelReceiver()
         registerStageIdle()
     }
 
@@ -124,12 +168,24 @@ class DetectorService : LifecycleService() {
         sensorManager.unregisterListener(accelListener)
         sensorManager.unregisterListener(gyroListener)
         settingsJob?.cancel()
+        countdownJob?.cancel()
+        runCatching { unregisterReceiver(cancelReceiver) }
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent): IBinder? {
         super.onBind(intent)
         return null
+    }
+
+    private fun registerCancelReceiver() {
+        val filter = IntentFilter(ACTION_CANCEL_COUNTDOWN)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(cancelReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(cancelReceiver, filter)
+        }
     }
 
     private fun registerStageIdle() {
@@ -161,12 +217,77 @@ class DetectorService : LifecycleService() {
     }
 
     private fun onAlarmTriggered(trigger: Detection.Trigger) {
+        if (countdownJob?.isActive == true) return
         val payload = AlarmPayload(
             id = UUID.randomUUID().toString(),
             triggeredAtEpochMs = System.currentTimeMillis(),
             peakIntensity = trigger.peakIntensity,
             sustainedSeconds = trigger.sustainedSeconds,
         )
+        val countdownSeconds = currentSettings.countdownSeconds
+        if (countdownSeconds <= 0f) {
+            sendAlarmAndRecord(payload)
+            return
+        }
+        startCountdown(payload, countdownSeconds)
+    }
+
+    private fun startCountdown(payload: AlarmPayload, totalSeconds: Float) {
+        pendingPayload = payload
+        val totalMs = (totalSeconds * 1000).toLong()
+        val deadlineMs = System.currentTimeMillis() + totalMs
+
+        val activityIntent = Intent(this, CountdownActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .putExtra(CountdownActivity.EXTRA_DEADLINE_MS, deadlineMs)
+        runCatching { startActivity(activityIntent) }
+
+        countdownJob = lifecycleScope.launch {
+            try {
+                while (true) {
+                    val remaining = deadlineMs - System.currentTimeMillis()
+                    if (remaining <= 0) break
+                    val isFinalSecond = remaining <= 1500L
+                    vibrateTick(isFinalSecond)
+                    playToneTick(isFinalSecond)
+                    delay(remaining.coerceAtMost(1000L))
+                }
+                pendingPayload = null
+                countdownJob = null
+                sendAlarmAndRecord(payload)
+            } catch (_: CancellationException) {
+                // cancel receiver records the cancelled alarm
+            }
+        }
+    }
+
+    private fun vibrator(): Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+    } else {
+        @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as? Vibrator
+    }
+
+    private fun vibrateTick(isFinalSecond: Boolean) {
+        val v = vibrator() ?: return
+        val durationMs = if (isFinalSecond) 600L else 180L
+        val amplitude = if (isFinalSecond) VibrationEffect.DEFAULT_AMPLITUDE else 80
+        runCatching { v.vibrate(VibrationEffect.createOneShot(durationMs, amplitude)) }
+    }
+
+    private fun playToneTick(isFinalSecond: Boolean) {
+        runCatching {
+            val gen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+            val tone = if (isFinalSecond) ToneGenerator.TONE_CDMA_HIGH_L else ToneGenerator.TONE_PROP_BEEP
+            val durationMs = if (isFinalSecond) 600 else 180
+            gen.startTone(tone, durationMs)
+            lifecycleScope.launch {
+                delay((durationMs + 100).toLong())
+                runCatching { gen.release() }
+            }
+        }
+    }
+
+    private fun sendAlarmAndRecord(payload: AlarmPayload) {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$TAG:alarm")
         wl.acquire(5_000)
@@ -246,12 +367,10 @@ class DetectorService : LifecycleService() {
         private const val ALERT_CHANNEL_ID = "ep_warning_alerts"
         private const val NOTIFICATION_ID = 42
         private const val ACTION_STOP = "com.epwarning.wear.STOP"
+        const val ACTION_CANCEL_COUNTDOWN = "com.epwarning.wear.CANCEL_COUNTDOWN"
 
-        // Stage-1 batch latency. Larger = better battery, slower escalation.
         private const val BATCH_LATENCY_US = 5_000_000
-        // Linear-acceleration gate (m/s^2 over gravity) that wakes stage 2.
         private const val WAKE_GATE_M_S2 = 2.5f
-        // Time of below-gate motion before stage 2 drops back to stage 1.
         private const val IDLE_TIMEOUT_NS = 15_000_000_000L
 
         fun start(context: Context) {
