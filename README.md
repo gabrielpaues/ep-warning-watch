@@ -6,64 +6,73 @@ Two-app system that detects sustained shaking on a Samsung Galaxy Watch and send
 
 ## Target hardware
 
-- **Watch**: Samsung Galaxy Watch 3, **Tizen 5.5**. (Galaxy Watch 4+ are Wear OS — different toolchain.)
+- **Watch**: Samsung Galaxy Watch 4 or later (Wear OS — Galaxy Watch 6 is the planned target).
 - **Phone**: Samsung Galaxy phone, Android 8+.
-- **Watch ↔ phone**: Samsung Accessory Protocol (SAP) over the existing Galaxy Wearable pairing.
+- **Watch ↔ phone**: Wearable Data Layer over the existing system Bluetooth pairing.
+
+> Earlier development targeted a Galaxy Watch 3 (Tizen 5.5) but installs were blocked at the firmware level. The Tizen-Native (C) implementation is preserved at `_archive/tizen/` for reference. See the *Project history* section below.
 
 ## Modules
 
-| Module               | Target              | Purpose                                                                |
-|----------------------|---------------------|------------------------------------------------------------------------|
-| `tizen/`             | Tizen Native (C)    | Service-app + UI-app: gyroscope monitoring + SAP provider. See `tizen/README.md`. |
-| `mobile/`            | Android phone app   | Receives SAP alarms, fetches GPS, sends SMS, manages contacts.         |
-| `shared/`            | Android library     | `AlarmPayload` JSON schema (used by `mobile/`).                        |
-| `_archive/wear-os/`  | (archived)          | Original Wear-OS-targeted Kotlin scaffold. Not built. Kept as reference for the detection algorithm and UI structure.
+| Module               | Target              | Purpose                                                                          |
+|----------------------|---------------------|----------------------------------------------------------------------------------|
+| `wear/`              | Wear OS app         | Foreground `DetectorService` + Compose UI: gyroscope monitoring + alarm sender.  |
+| `mobile/`            | Android phone app   | Receives Data Layer alarms, fetches GPS, sends SMS, manages contacts.            |
+| `shared/`            | Android library     | `AlarmPayload` JSON schema and `DataLayerProtocol` constants.                    |
+| `_archive/wear-os/` *(removed — promoted to `wear/`)* |     | (Pre-pivot scaffold; now the active watch module.)                  |
+| `_archive/tizen/`    | (archived)          | Tizen Native (C) implementation kept as reference for the C port of the algorithm and SAP wiring. |
 
 ## Building
 
-**Phone app** (Android, this repo's Gradle build):
+Both apps build from this Gradle project. The system JDK 25 is incompatible with AGP 8.5.2 — use Homebrew JDK 21:
 
 ```bash
+# Phone app
 JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home \
-./gradlew :mobile:assembleDebug
+  ./gradlew :mobile:assembleDebug
+
+# Watch app
+JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home \
+  ./gradlew :wear:assembleDebug
 ```
 
-APK: `mobile/build/outputs/apk/debug/mobile-debug.apk`.
+APKs:
 
-**Watch app** (Tizen, separate toolchain): see [`tizen/README.md`](tizen/README.md). Requires Tizen Studio + Samsung Wearable Extension + Samsung Certificate Extension. Built from the IDE, not Gradle.
+- `mobile/build/outputs/apk/debug/mobile-debug.apk`
+- `wear/build/outputs/apk/debug/wear-debug.apk`
 
 ## How it works
 
 ```
-[Galaxy Watch — Tizen]                       [Samsung phone — Android]
- ep_warning_service  ── SAP / channel 104 ──► mobile (SAAgentV2 consumer)
-   gyro + accel                                  ↓
-                                                 SmsSender → SMS to contacts
-                                                 + Google Maps link with location
+[Galaxy Watch — Wear OS]                    [Samsung phone — Android]
+ wear/DetectorService  ── MessageClient ──► mobile/PhoneListenerService
+   gyro + accel            /ep-warning/alarm        ↓
+                                                    SmsSender → SMS to contacts
+                                                    + Google Maps link with location
 ```
 
-Pairing is done once in the Galaxy Wearable app. The apps find each other via SAP service-profile lookup (provider `com.epwarning.watch` / `/com/epwarning/alarm`) — no in-app Bluetooth setup needed.
+Pairing is done once in the system Wear OS / Galaxy Wearable app. Apps find each other via the Wearable Capability API (`ep_warning_detector` on the watch, `ep_warning_receiver` on the phone) — no in-app Bluetooth setup needed.
 
 ## Detection algorithm
 
-`tizen/service/src/shake_detector.c` (and the reference `_archive/wear-os/wear/.../ShakeDetector.kt`) is the brain. It maintains a rolling 2-second window of gyroscope angular-speed magnitude. When the window mean exceeds a sensitivity-mapped threshold continuously for the configured sustain time (default 8 s), it fires a trigger and resets. A 60-second cooldown suppresses repeats within the same event.
+`wear/src/main/java/com/epwarning/wear/detection/ShakeDetector.kt` is the brain. It maintains a rolling 2-second window of gyroscope angular-speed magnitude. When the window mean exceeds a sensitivity-mapped threshold continuously for the configured sustain time (default 8 s), it fires a trigger and resets. A 60-second cooldown suppresses repeats within the same event.
 
 The threshold is sensitivity-mapped between 3 rad/s (most sensitive) and 12 rad/s (least sensitive). For reference, a quick wrist flick peaks around 4–6 rad/s but is not sustained, so it gets rejected by the sustain requirement.
 
-The C implementation has no Tizen dependencies (only `<math.h>` and `<string.h>`), so it can be unit-tested with synthetic samples on the host.
+The Kotlin implementation has no Android dependencies (only `kotlin.math`), so it can be unit-tested with synthetic samples. A reference C port lives at `_archive/tizen/service/src/shake_detector.c` from the earlier Tizen attempt — kept for cross-checking the math, not built.
 
 ## Battery strategy
 
-The Tizen service-application runs two stages:
+The watch's foreground service runs two stages:
 
-1. **Idle** — `SENSOR_ACCELEROMETER` at 200 ms interval (~5 Hz) with a 5-second batch (`sensor_listener_set_max_batch_latency`). The SoC sleeps between batches.
-2. **Active** — once linear acceleration exceeds a wake gate (~2.5 m/s² over gravity), `SENSOR_GYROSCOPE` is registered at 20 ms interval (50 Hz) and feeds the detector. After 15 s of below-gate motion the service drops back to idle.
+1. **Idle** — `Sensor.TYPE_ACCELEROMETER` at `SENSOR_DELAY_NORMAL` with a 5-second batch latency. The SoC sleeps between batches; we only wake to scan for motion above a low gate.
+2. **Active** — once linear acceleration exceeds the wake gate (~2.5 m/s² over gravity), `Sensor.TYPE_GYROSCOPE` is registered at `SENSOR_DELAY_GAME` (~50 Hz) and feeds the detector. After 15 s of below-gate motion the service drops back to idle.
 
-`SENSOR_PAUSE_NONE` keeps the listener running while the screen is off, so monitoring continues regardless of UI focus. The UI app and service are separate processes — closing the UI doesn't stop the service.
+The service uses `foregroundServiceType="health"` so it isn't killed when the screen is off. Closing the UI does not stop the service.
 
 ## Phone-side flow
 
-When the phone's SAP consumer receives an alarm message:
+When the phone's `WearableListenerService` receives an alarm message on `/ep-warning/alarm`:
 
 1. Decode `AlarmPayload`.
 2. Read configured contacts from DataStore.
@@ -74,31 +83,33 @@ When the phone's SAP consumer receives an alarm message:
 
 ## Privileges & permissions
 
-**Watch (Tizen `tizen-manifest.xml`)**: `healthinfo`, `appmanager.launch`, `bluetooth`, `network.get`, Samsung `accessoryprotocol`. Background categories `sensor` and `iot-communication` so the service-app keeps running with the screen off.
+**Watch (`wear/src/main/AndroidManifest.xml`)**: `BODY_SENSORS`, `HIGH_SAMPLING_RATE_SENSORS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_HEALTH`, `POST_NOTIFICATIONS`, `WAKE_LOCK`, `RECEIVE_BOOT_COMPLETED`. The detector service runs with `foregroundServiceType="health"` so it survives screen-off.
 
-**Phone (Android manifest)**: `SEND_SMS`, `ACCESS_FINE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`, `POST_NOTIFICATIONS`. `SEND_SMS` is a "dangerous" Play-Store-restricted permission — for private/sideloaded use, grant it on first launch.
+**Phone**: `SEND_SMS`, `ACCESS_FINE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`, `POST_NOTIFICATIONS`. `SEND_SMS` is a "dangerous" Play-Store-restricted permission — for private/sideloaded use, grant it on first launch.
 
 ## Configuration
 
-On the watch (`com.epwarning.watch.ui`):
+On the watch (`com.epwarning.wear`):
 - **Sensitivity** slider (0–100 %).
-- **Start / Stop** toggle.
+- **Sustain** slider (4–20 s).
+- **Start / Stop** monitoring toggle.
+- **History** of recent alarms with delivery status.
 
-On the phone (`mobile/`):
+On the phone (`com.epwarning.mobile`):
 - **Status** tab — watch reachability + permission grant button.
 - **Contacts** tab — add/remove phone numbers (with optional labels).
 - **Alarms** tab — received events with maps link, sent-recipient count, and "Dismiss as false alarm" button.
 
-## Status — paused on the watch side (2026-05-08)
+## Project history (2026-05-08 pivot)
 
-- ✅ `mobile/` Android phone app — builds, installs, runs on a Galaxy S23.
-- ✅ `tizen/` source files — written, header/lib paths confirmed against the installed Tizen rootstraps (build against `wearable-6.5-device.core` + SAP from `wearable-5.5-device.core`, manifest at `api-version="5.5"`).
-- 🚫 **Galaxy Watch 3 install is blocked at the device level.** Firmware `R850XXU1DWK2` (Tizen 5.5.0.2) has the underlying ADB debug daemon disabled at the firmware level. Confirmed via three independent attempts: (1) developer-options menu missing the "ADB debugging" and "Debug over Wi-Fi" toggles, (2) `sdb connect` over Wi-Fi rejected (port 26101 closed), (3) Samsung's own `sdboverbt` BT-bridge APK reports `Socket: disable / Bluetooth: disable / SDB port 0` because the watch isn't exposing the SPP debug profile. All three need the same daemon, and no software path turns it on without `sdb` first — catch-22. Samsung provides no end-user flashing tool for Watch 3 and the OTA channel is forward-only, so a downgrade isn't viable. Unblock paths: swap to a Wear OS watch (Galaxy Watch 4+, restores `_archive/wear-os/` to the Gradle build) or to a different Tizen watch whose firmware actually has the toggles.
-- ⏸ `mobile/messaging/` SAP rewrite — deferred until the watch path is unblocked. The current Wear-OS-Data-Layer code in `mobile/` compiles but cannot talk to a Tizen watch, and there's no point porting it before we can test against a real device.
+The project originally targeted a Galaxy Watch 3 (Tizen 5.5) and a Tizen Native (C) implementation was written. Install proved blocked at the firmware level on `R850XXU1DWK2`: the underlying ADB debug daemon is disabled at firmware-build time (developer-options menu missing the relevant toggles, `sdb` over Wi-Fi rejected on port 26101, and Samsung's own `sdboverbt` BT-bridge APK reports `Socket: disable / Bluetooth: disable`). All three need the same daemon, no software path turns it on without `sdb` first, and Samsung publishes no end-user flashing tool for Watch 3 — so it's a hardware dead-end without swapping watches.
+
+The unblock chosen: switch to a Galaxy Watch 6 (Wear OS), promote the previously-archived `_archive/wear-os/` Kotlin scaffold to the active `wear/` module, and archive the Tizen C implementation to `_archive/tizen/`. The phone-side `mobile/` app is unchanged — it was already built against the Wearable Data Layer.
 
 ## What's not included yet
 
+- No end-to-end test on real hardware — the Wear OS watch is not in hand at the time of the pivot.
 - No boot-restart of the watch service (user must tap Start after a watch reboot).
 - No haptic countdown on the watch when an alarm is about to fire — useful for letting the wearer cancel false positives.
-- No tests — the C `shake_detector` is the obvious candidate (it has no Tizen deps).
+- No tests — the `ShakeDetector` is the obvious candidate (it has no Android deps).
 - No end-to-end synthetic-shake replay tooling for tuning the threshold curve.

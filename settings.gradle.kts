@@ -23,4 +23,4 @@ dependencyResolutionManagement {
 rootProject.name = "ep-warning-watch"
 include(":shared")
 include(":mobile")
-// :wear is archived under _archive/wear-os/ — built for Wear OS but the target watch runs Tizen.
+include(":wear")
